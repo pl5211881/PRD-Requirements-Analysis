@@ -18,21 +18,21 @@ export const maxDuration = 60
 
 const AI_TIMEOUT_MS = 25000
 
+function isOfficialOpenAIBaseUrl(baseUrl: string) {
+  if (!baseUrl) return true
+  try {
+    return new URL(baseUrl).hostname.endsWith("openai.com")
+  } catch {
+    return false
+  }
+}
+
 const AnalysisCoreSchema = PrdAnalysisSchema.omit({
   markdown: true,
   designPriorities: true,
   designBrief: true,
   requirementStructure: true,
 })
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(message)), timeoutMs)
-    }),
-  ])
-}
 
 function createSafeFallbackAnalysis({
   text,
@@ -265,6 +265,7 @@ function normalizeAiAnalysis({
 
 async function analyzeWithResponsesApi({
   client,
+  signal,
   model,
   text,
   filename,
@@ -276,6 +277,7 @@ async function analyzeWithResponsesApi({
   generatedAt,
 }: {
   client: OpenAI
+  signal?: AbortSignal
   model: string
   text: string
   filename: string
@@ -286,21 +288,24 @@ async function analyzeWithResponsesApi({
   language: string
   generatedAt: string
 }) {
-  const response = await client.responses.parse({
-    model,
-    store: false,
-    input: buildPrompt({
-      text,
-      filename,
-      industry,
-      targetReader,
-      prdDepth,
-      language,
-    }),
-    text: {
-      format: zodTextFormat(AnalysisCoreSchema, "prd_analysis"),
+  const response = await client.responses.parse(
+    {
+      model,
+      store: false,
+      input: buildPrompt({
+        text,
+        filename,
+        industry,
+        targetReader,
+        prdDepth,
+        language,
+      }),
+      text: {
+        format: zodTextFormat(AnalysisCoreSchema, "prd_analysis"),
+      },
     },
-  })
+    { signal }
+  )
 
   if (!response.output_parsed) {
     throw new Error("模型未返回可解析的结构化结果。")
@@ -317,6 +322,7 @@ async function analyzeWithResponsesApi({
 
 async function analyzeWithChatCompletionsApi({
   client,
+  signal,
   model,
   text,
   filename,
@@ -328,6 +334,7 @@ async function analyzeWithChatCompletionsApi({
   generatedAt,
 }: {
   client: OpenAI
+  signal?: AbortSignal
   model: string
   text: string
   filename: string
@@ -358,13 +365,18 @@ async function analyzeWithChatCompletionsApi({
   ]
 
   const createCompletion = (useJsonMode: boolean) =>
-    client.chat.completions.create({
-      model,
-      messages,
-      ...(useJsonMode ? { response_format: { type: "json_object" as const } } : {}),
-      stream: false,
-      max_tokens: 4096,
-    })
+    client.chat.completions.create(
+      {
+        model,
+        messages,
+        ...(useJsonMode
+          ? { response_format: { type: "json_object" as const } }
+          : {}),
+        stream: false,
+        max_tokens: 4096,
+      },
+      { signal }
+    )
 
   let completion: OpenAI.Chat.Completions.ChatCompletion
   try {
@@ -415,10 +427,87 @@ async function analyzeWithOpenAI({
     baseURL: baseUrl || undefined,
   })
   const generatedAt = new Date().toISOString()
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 
   try {
-    return await analyzeWithResponsesApi({
-      client,
+    if (!isOfficialOpenAIBaseUrl(baseUrl)) {
+      return await analyzeWithChatCompletionsApi({
+        client,
+        signal: controller.signal,
+        model,
+        text,
+        filename,
+        fileType,
+        industry,
+        targetReader,
+        prdDepth,
+        language,
+        generatedAt,
+      })
+    }
+
+    try {
+      return await analyzeWithResponsesApi({
+        client,
+        signal: controller.signal,
+        model,
+        text,
+        filename,
+        fileType,
+        industry,
+        targetReader,
+        prdDepth,
+        language,
+        generatedAt,
+      })
+    } catch {
+      return await analyzeWithChatCompletionsApi({
+        client,
+        signal: controller.signal,
+        model,
+        text,
+        filename,
+        fileType,
+        industry,
+        targetReader,
+        prdDepth,
+        language,
+        generatedAt,
+      })
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function analyzeWithOpenAIOrFallback({
+  apiKey,
+  baseUrl,
+  model,
+  text,
+  filename,
+  fileType,
+  industry,
+  targetReader,
+  prdDepth,
+  language,
+}: {
+  apiKey: string
+  baseUrl: string
+  model: string
+  text: string
+  filename: string
+  fileType: string
+  industry: string
+  targetReader: string
+  prdDepth: string
+  language: string
+}) {
+  try {
+    return await analyzeWithOpenAI({
+      apiKey,
+      baseUrl,
       model,
       text,
       filename,
@@ -427,20 +516,13 @@ async function analyzeWithOpenAI({
       targetReader,
       prdDepth,
       language,
-      generatedAt,
     })
   } catch {
-    return analyzeWithChatCompletionsApi({
-      client,
-      model,
+    return createSafeFallbackAnalysis({
       text,
       filename,
       fileType,
-      industry,
-      targetReader,
-      prdDepth,
-      language,
-      generatedAt,
+      warning: "API Key 无效、模型请求失败或模型输出无法解析，已自动生成规则草稿。",
     })
   }
 }
@@ -491,34 +573,20 @@ export async function POST(request: Request) {
     const language = String(formData.get("language") || "中文")
 
     if (apiKey) {
-      try {
-        const analysis = await withTimeout(
-          analyzeWithOpenAI({
-            apiKey,
-            baseUrl,
-            model,
-            text,
-            filename: file.name,
-            fileType: extension,
-            industry,
-            targetReader,
-            prdDepth,
-            language,
-          }),
-          AI_TIMEOUT_MS,
-          "模型请求超时，已自动切换为规则草稿。"
-        )
+      const analysis = await analyzeWithOpenAIOrFallback({
+        apiKey,
+        baseUrl,
+        model,
+        text,
+        filename: file.name,
+        fileType: extension,
+        industry,
+        targetReader,
+        prdDepth,
+        language,
+      })
 
-        return Response.json(analysis)
-      } catch {
-        const fallback = createSafeFallbackAnalysis({
-          text,
-          filename: file.name,
-          fileType: extension,
-          warning: "API Key 无效或模型请求失败，已自动生成规则草稿。",
-        })
-        return Response.json(fallback)
-      }
+      return Response.json(analysis)
     }
 
     const fallback = createSafeFallbackAnalysis({
