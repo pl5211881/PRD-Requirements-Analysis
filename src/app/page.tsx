@@ -301,6 +301,26 @@ function clearModelConfigStorage() {
   sessionStorage.removeItem("openai-model")
 }
 
+async function readJsonResponse<T>(response: Response, fallbackMessage: string) {
+  const contentType = response.headers.get("content-type") || ""
+  const text = await response.text()
+
+  if (!contentType.includes("application/json")) {
+    const isHtml = /^\s*</.test(text)
+    throw new Error(
+      isHtml
+        ? `${fallbackMessage}：服务端返回了错误页面，请检查接口路由或部署日志。`
+        : text.trim() || fallbackMessage
+    )
+  }
+
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(`${fallbackMessage}：服务端返回内容不是合法 JSON。`)
+  }
+}
+
 function ModelConfigDialog({
   config,
   setConfig,
@@ -334,7 +354,11 @@ function ModelConfigDialog({
           openaiModel: draft.model,
         }),
       })
-      const payload = await response.json()
+      const payload = await readJsonResponse<{
+        ok: boolean
+        message?: string
+        latencyMs?: number
+      }>(response, "连接测试失败")
       if (!response.ok) throw new Error(payload.message || "连接测试失败")
       setTestMessage(`${payload.message} 延迟 ${payload.latencyMs}ms`)
       toast.success("模型连接测试成功")
@@ -1207,9 +1231,13 @@ export default function Home() {
         method: "POST",
         body: formData,
       })
-      const payload = await response.json()
+      const payload = await readJsonResponse<PrdAnalysis>(response, "分析失败")
       if (!response.ok) {
-        throw new Error(payload.error || "分析失败")
+        throw new Error(
+          "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : "分析失败"
+        )
       }
       setAnalysis(payload)
       setActiveAnalysisTab("priorities")
