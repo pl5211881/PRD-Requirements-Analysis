@@ -131,6 +131,12 @@ function fileKind(filename: string) {
   return "text"
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
@@ -308,9 +314,20 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string) 
 
   if (!contentType.includes("application/json")) {
     const isHtml = /^\s*</.test(text)
+    const htmlTitle =
+      text.match(/<title>(.*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() ||
+      text
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 120)
     throw new Error(
       isHtml
-        ? `${fallbackMessage}：服务端返回了错误页面，请检查接口路由或部署日志。`
+        ? `${fallbackMessage}：接口返回错误页面（HTTP ${response.status}${
+            htmlTitle ? `，${htmlTitle}` : ""
+          }）。`
         : text.trim() || fallbackMessage
     )
   }
@@ -568,7 +585,9 @@ function UploadPanel({
     (nextFile?: File) => {
       if (!nextFile) return
       if (nextFile.size > MAX_UPLOAD_BYTES) {
-        toast.error(`单文件最大 ${MAX_UPLOAD_MB}MB`)
+        toast.error(
+          `当前文件 ${formatFileSize(nextFile.size)}，单文件最大 ${MAX_UPLOAD_MB}MB`
+        )
         return
       }
       const lower = nextFile.name.toLowerCase()
@@ -736,7 +755,9 @@ function UploadPanel({
                 : "点击或拖拽 PDF / Markdown / TXT 文件到此上传"}
             </p>
             <p className="helix-muted mt-3 text-base">
-              单文件最大 {MAX_UPLOAD_MB}MB · 扫描件 PDF 暂不支持
+              {file
+                ? `当前文件 ${formatFileSize(file.size)} · 单文件最大 ${MAX_UPLOAD_MB}MB`
+                : `单文件最大 ${MAX_UPLOAD_MB}MB · 扫描件 PDF 暂不支持`}
             </p>
           </div>
         </button>
