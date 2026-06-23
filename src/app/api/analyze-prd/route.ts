@@ -14,6 +14,9 @@ import {
 } from "@/lib/prd"
 
 export const runtime = "nodejs"
+export const maxDuration = 60
+
+const AI_TIMEOUT_MS = 25000
 
 const AnalysisCoreSchema = PrdAnalysisSchema.omit({
   markdown: true,
@@ -21,6 +24,114 @@ const AnalysisCoreSchema = PrdAnalysisSchema.omit({
   designBrief: true,
   requirementStructure: true,
 })
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs)
+    }),
+  ])
+}
+
+function createSafeFallbackAnalysis({
+  text,
+  filename,
+  fileType,
+  warning,
+}: {
+  text: string
+  filename: string
+  fileType: string
+  warning: string
+}) {
+  try {
+    return createFallbackAnalysis({
+      text,
+      filename,
+      fileType,
+      warning,
+    })
+  } catch {
+    const emptyRequirementStructure = [
+      "业务背景",
+      "战略目标",
+      "项目预期收益",
+      "产品定位",
+      "目标用户与使用场景",
+      "核心功能与流程",
+      "关键体验要求",
+      "技术实现说明",
+      "验收标准",
+    ].map((title) => ({
+      title,
+      summary: "当前文档未能完成结构化解析。",
+      bullets: ["建议转换为 Markdown/TXT 或拆分 PDF 后重新上传。"],
+      evidence: [],
+      confidence: 0,
+      missing: ["需要重新上传可解析文本。"],
+    }))
+
+    return {
+      mode: "fallback" as const,
+      source: {
+        filename,
+        fileType,
+        characterCount: text.length,
+        generatedAt: new Date().toISOString(),
+      },
+      scores: [
+        {
+          key: "viability" as const,
+          label: "立得住",
+          value: 5,
+          summary: "服务端已完成基础接收，但未能生成完整分析。",
+        },
+        {
+          key: "clarity" as const,
+          label: "讲得清",
+          value: 5,
+          summary: "文档内容需要重新解析后再评审。",
+        },
+        {
+          key: "resilience" as const,
+          label: "扛得住",
+          value: 5,
+          summary: "模型或规则分析过程出现异常，已保留安全结果。",
+        },
+        {
+          key: "operability" as const,
+          label: "跑得通",
+          value: 5,
+          summary: "建议压缩、拆分或转换为 Markdown/TXT 后重试。",
+        },
+      ],
+      findings: [],
+      sections: emptyRequirementStructure,
+      metrics: {
+        overallScore: 5,
+        fatalCount: 0,
+        severeCount: 0,
+        minorCount: 0,
+        highlightCount: 0,
+      },
+      gaps: ["当前文档未能完成结构化解析，请转换格式或拆分后重试。"],
+      warnings: [warning],
+      designPriorities: [],
+      designBrief: {
+        businessGoal: "当前文档未能完成结构化解析。",
+        designGoal: "请先获得可解析文本后再进入设计评审。",
+        usersAndScenarios: [],
+        painPoints: [],
+        opportunities: [],
+        constraints: [],
+        openQuestions: ["建议将 PDF 导出为 Markdown/TXT 后重新上传。"],
+      },
+      requirementStructure: emptyRequirementStructure,
+      markdown: `# ${filename} PRD 分析报告\n\n${warning}\n`,
+    }
+  }
+}
 
 async function extractPdfText(buffer: Buffer) {
   const parser = new PDFParse({ data: buffer })
@@ -381,22 +492,26 @@ export async function POST(request: Request) {
 
     if (apiKey) {
       try {
-        const analysis = await analyzeWithOpenAI({
-          apiKey,
-          baseUrl,
-          model,
-          text,
-          filename: file.name,
-          fileType: extension,
-          industry,
-          targetReader,
-          prdDepth,
-          language,
-        })
+        const analysis = await withTimeout(
+          analyzeWithOpenAI({
+            apiKey,
+            baseUrl,
+            model,
+            text,
+            filename: file.name,
+            fileType: extension,
+            industry,
+            targetReader,
+            prdDepth,
+            language,
+          }),
+          AI_TIMEOUT_MS,
+          "模型请求超时，已自动切换为规则草稿。"
+        )
 
         return Response.json(analysis)
       } catch {
-        const fallback = createFallbackAnalysis({
+        const fallback = createSafeFallbackAnalysis({
           text,
           filename: file.name,
           fileType: extension,
@@ -406,7 +521,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const fallback = createFallbackAnalysis({
+    const fallback = createSafeFallbackAnalysis({
       text,
       filename: file.name,
       fileType: extension,
