@@ -473,6 +473,51 @@
     color: var(--helix-text) !important;
   }
 
+  .helix-app [data-slot="input"]:hover,
+  .helix-app [data-slot="input"]:focus,
+  .helix-app [data-slot="input"]:focus-visible,
+  .helix-app [data-slot="input"]:active,
+  .helix-app [data-slot="input"]:valid,
+  .helix-app [data-slot="input"]:user-valid,
+  .helix-app [data-slot="textarea"]:hover,
+  .helix-app [data-slot="textarea"]:focus,
+  .helix-app [data-slot="textarea"]:focus-visible,
+  .helix-app [data-slot="textarea"]:active,
+  .helix-app [data-slot="textarea"]:valid,
+  .helix-app [data-slot="textarea"]:user-valid {
+    background: rgba(255, 255, 255, 0.045) !important;
+    border-color: var(--helix-line) !important;
+    color: var(--helix-text) !important;
+    box-shadow: none !important;
+    outline: none !important;
+  }
+
+  .helix-app [data-slot="input"]:-webkit-autofill,
+  .helix-app [data-slot="input"]:-webkit-autofill:hover,
+  .helix-app [data-slot="input"]:-webkit-autofill:focus,
+  .helix-app [data-slot="input"]:-webkit-autofill:active,
+  .helix-app [data-slot="textarea"]:-webkit-autofill,
+  .helix-app [data-slot="textarea"]:-webkit-autofill:hover,
+  .helix-app [data-slot="textarea"]:-webkit-autofill:focus,
+  .helix-app [data-slot="textarea"]:-webkit-autofill:active {
+    -webkit-text-fill-color: var(--helix-text) !important;
+    caret-color: var(--helix-text) !important;
+    box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.045) inset !important;
+    transition: background-color 999999s ease-in-out 0s !important;
+  }
+
+  .helix-app [data-slot="input-group"] {
+    background: rgba(255, 255, 255, 0.045) !important;
+    border-color: var(--helix-line) !important;
+  }
+
+  .helix-app [data-slot="input-group"]:hover,
+  .helix-app [data-slot="input-group"]:focus-within {
+    background: rgba(255, 255, 255, 0.045) !important;
+    border-color: var(--helix-line) !important;
+    box-shadow: none !important;
+  }
+
   .helix-app [data-slot="input"]::placeholder,
   .helix-app [data-slot="textarea"]::placeholder {
     color: rgba(245, 247, 251, 0.5) !important;

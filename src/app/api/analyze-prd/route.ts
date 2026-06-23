@@ -14,6 +14,13 @@ import {
 
 export const runtime = "nodejs"
 
+const AnalysisCoreSchema = PrdAnalysisSchema.omit({
+  markdown: true,
+  designPriorities: true,
+  designBrief: true,
+  requirementStructure: true,
+})
+
 async function extractPdfText(buffer: Buffer) {
   const parser = new PDFParse({ data: buffer })
   try {
@@ -74,6 +81,200 @@ function buildPrompt({
 ${text.slice(0, 60000)}`
 }
 
+function buildJsonPrompt(input: Parameters<typeof buildPrompt>[0]) {
+  return `${buildPrompt(input)}
+
+请只返回一个合法 JSON 对象，不要返回 Markdown 代码块、解释文字或额外前后缀。
+JSON 对象必须包含以下字段：
+- mode: "ai"
+- source: { filename, fileType, characterCount, generatedAt }
+- scores: 4 项，分别对应 viability、clarity、resilience、operability
+- findings: 问题与亮点数组
+- sections: PRD 章节数组
+- metrics: overallScore、fatalCount、severeCount、minorCount、highlightCount
+- gaps: 待补充信息数组
+- warnings: 风险提示数组
+
+sections 至少覆盖这些 title：业务背景、战略目标、项目预期收益、产品定位、目标用户与使用场景、核心功能与流程、关键体验要求、技术实现说明、验收标准、范围边界、风险与依赖、待确认问题。`
+}
+
+function parseJsonObject(content: string) {
+  const trimmed = content
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim()
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    const start = trimmed.indexOf("{")
+    const end = trimmed.lastIndexOf("}")
+    if (start >= 0 && end > start) {
+      return JSON.parse(trimmed.slice(start, end + 1))
+    }
+    throw new Error("模型未返回合法 JSON。")
+  }
+}
+
+function normalizeAiAnalysis({
+  parsed,
+  filename,
+  fileType,
+  text,
+  generatedAt,
+}: {
+  parsed: unknown
+  filename: string
+  fileType: string
+  text: string
+  generatedAt: string
+}) {
+  const raw = parsed && typeof parsed === "object" ? parsed : {}
+  const source =
+    "source" in raw && raw.source && typeof raw.source === "object"
+      ? raw.source
+      : {}
+
+  const normalized = AnalysisCoreSchema.parse({
+    ...raw,
+    mode: "ai",
+    source: {
+      ...source,
+      filename,
+      fileType,
+      characterCount: text.length,
+      generatedAt,
+    },
+  })
+
+  return PrdAnalysisSchema.parse(enrichAnalysis(normalized))
+}
+
+async function analyzeWithResponsesApi({
+  client,
+  model,
+  text,
+  filename,
+  fileType,
+  industry,
+  targetReader,
+  prdDepth,
+  language,
+  generatedAt,
+}: {
+  client: OpenAI
+  model: string
+  text: string
+  filename: string
+  fileType: string
+  industry: string
+  targetReader: string
+  prdDepth: string
+  language: string
+  generatedAt: string
+}) {
+  const response = await client.responses.parse({
+    model,
+    store: false,
+    input: buildPrompt({
+      text,
+      filename,
+      industry,
+      targetReader,
+      prdDepth,
+      language,
+    }),
+    text: {
+      format: zodTextFormat(AnalysisCoreSchema, "prd_analysis"),
+    },
+  })
+
+  if (!response.output_parsed) {
+    throw new Error("模型未返回可解析的结构化结果。")
+  }
+
+  return normalizeAiAnalysis({
+    parsed: response.output_parsed,
+    filename,
+    fileType,
+    text,
+    generatedAt,
+  })
+}
+
+async function analyzeWithChatCompletionsApi({
+  client,
+  model,
+  text,
+  filename,
+  fileType,
+  industry,
+  targetReader,
+  prdDepth,
+  language,
+  generatedAt,
+}: {
+  client: OpenAI
+  model: string
+  text: string
+  filename: string
+  fileType: string
+  industry: string
+  targetReader: string
+  prdDepth: string
+  language: string
+  generatedAt: string
+}) {
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content:
+        "你是一名严谨的 PRD 分析专家。你必须只输出合法 JSON，并严格匹配用户要求的字段结构。",
+    },
+    {
+      role: "user",
+      content: buildJsonPrompt({
+        text,
+        filename,
+        industry,
+        targetReader,
+        prdDepth,
+        language,
+      }),
+    },
+  ]
+
+  const createCompletion = (useJsonMode: boolean) =>
+    client.chat.completions.create({
+      model,
+      messages,
+      ...(useJsonMode ? { response_format: { type: "json_object" as const } } : {}),
+      stream: false,
+      max_tokens: 4096,
+    })
+
+  let completion: OpenAI.Chat.Completions.ChatCompletion
+  try {
+    completion = await createCompletion(true)
+  } catch {
+    completion = await createCompletion(false)
+  }
+
+  const content = completion.choices[0]?.message?.content
+  if (!content) {
+    throw new Error("模型未返回分析结果。")
+  }
+
+  return normalizeAiAnalysis({
+    parsed: parseJsonObject(content),
+    filename,
+    fileType,
+    text,
+    generatedAt,
+  })
+}
+
 async function analyzeWithOpenAI({
   apiKey,
   baseUrl,
@@ -103,47 +304,33 @@ async function analyzeWithOpenAI({
   })
   const generatedAt = new Date().toISOString()
 
-  const AnalysisCoreSchema = PrdAnalysisSchema.omit({
-    markdown: true,
-    designPriorities: true,
-    designBrief: true,
-    requirementStructure: true,
-  })
-
-  const response = await client.responses.parse({
-    model,
-    store: false,
-    input: buildPrompt({
+  try {
+    return await analyzeWithResponsesApi({
+      client,
+      model,
       text,
       filename,
+      fileType,
       industry,
       targetReader,
       prdDepth,
       language,
-    }),
-    text: {
-      format: zodTextFormat(AnalysisCoreSchema, "prd_analysis"),
-    },
-  })
-
-  const parsed = response.output_parsed
-  if (!parsed) {
-    throw new Error("模型未返回可解析的结构化结果。")
-  }
-
-  const normalized = AnalysisCoreSchema.parse({
-    ...parsed,
-    mode: "ai",
-    source: {
-      ...parsed.source,
+      generatedAt,
+    })
+  } catch {
+    return analyzeWithChatCompletionsApi({
+      client,
+      model,
+      text,
       filename,
       fileType,
-      characterCount: text.length,
+      industry,
+      targetReader,
+      prdDepth,
+      language,
       generatedAt,
-    },
-  })
-
-  return PrdAnalysisSchema.parse(enrichAnalysis(normalized))
+    })
+  }
 }
 
 export async function POST(request: Request) {
