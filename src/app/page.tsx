@@ -1236,22 +1236,29 @@ export default function Home() {
     setAnalyzing(true)
     setError("")
 
-    const formData = new FormData()
-    formData.append("file", file)
-    formData.append("industry", industry)
-    formData.append("targetReader", targetReader)
-    formData.append("prdDepth", prdDepth)
-    formData.append("language", "中文")
-    if (modelConfig.apiKey) formData.append("openaiApiKey", modelConfig.apiKey)
-    if (modelConfig.baseUrl) {
-      formData.append("openaiBaseUrl", modelConfig.baseUrl)
+    const createAnalyzeFormData = (includeModelConfig: boolean) => {
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("industry", industry)
+      formData.append("targetReader", targetReader)
+      formData.append("prdDepth", prdDepth)
+      formData.append("language", "中文")
+      if (includeModelConfig) {
+        if (modelConfig.apiKey) formData.append("openaiApiKey", modelConfig.apiKey)
+        if (modelConfig.baseUrl) {
+          formData.append("openaiBaseUrl", modelConfig.baseUrl)
+        }
+        if (modelConfig.model) formData.append("openaiModel", modelConfig.model)
+      } else {
+        formData.append("analysisMode", "rules")
+      }
+      return formData
     }
-    if (modelConfig.model) formData.append("openaiModel", modelConfig.model)
 
-    try {
+    const requestAnalysis = async (includeModelConfig: boolean) => {
       const response = await fetch("/api/analyze-prd", {
         method: "POST",
-        body: formData,
+        body: createAnalyzeFormData(includeModelConfig),
       })
       const payload = await readJsonResponse<PrdAnalysis>(response, "分析失败")
       if (!response.ok) {
@@ -1260,6 +1267,18 @@ export default function Home() {
             ? payload.error
             : "分析失败"
         )
+      }
+      return payload
+    }
+
+    try {
+      let payload: PrdAnalysis
+      try {
+        payload = await requestAnalysis(Boolean(modelConfig.apiKey))
+      } catch (error) {
+        if (!modelConfig.apiKey) throw error
+        payload = await requestAnalysis(false)
+        toast.info("模型分析失败，已自动切换为规则草稿")
       }
       setAnalysis(payload)
       setActiveAnalysisTab("priorities")

@@ -561,6 +561,7 @@ export async function POST(request: Request) {
     }
 
     const extension = getFileExtension(file.name)
+    const analysisMode = String(formData.get("analysisMode") || "").trim()
     const pageApiKey = String(formData.get("openaiApiKey") || "").trim()
     const apiKey = pageApiKey || process.env.OPENAI_API_KEY || ""
     const pageBaseUrl = String(formData.get("openaiBaseUrl") || "").trim()
@@ -572,7 +573,7 @@ export async function POST(request: Request) {
     const prdDepth = String(formData.get("prdDepth") || "标准")
     const language = String(formData.get("language") || "中文")
 
-    if (apiKey) {
+    if (analysisMode !== "rules" && apiKey) {
       const analysis = await analyzeWithOpenAIOrFallback({
         apiKey,
         baseUrl,
