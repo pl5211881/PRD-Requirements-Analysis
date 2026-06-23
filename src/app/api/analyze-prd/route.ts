@@ -8,6 +8,7 @@ import {
   getFileExtension,
   isAcceptedFile,
   MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MB,
   normalizeText,
   PrdAnalysisSchema,
 } from "@/lib/prd"
@@ -351,7 +352,9 @@ export async function POST(request: Request) {
 
     if (file.size > MAX_UPLOAD_BYTES) {
       return Response.json(
-        { error: "单文件最大 20MB，请压缩或拆分后再上传。" },
+        {
+          error: `单文件最大 ${MAX_UPLOAD_MB}MB，请压缩、拆分或转为 Markdown/TXT 后再上传。`,
+        },
         { status: 400 }
       )
     }

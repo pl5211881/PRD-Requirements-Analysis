@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   getDesignInputSections,
   getPrdProblemList,
+  MAX_UPLOAD_MB,
   MAX_UPLOAD_BYTES,
   PrdAnalysis,
 } from "@/lib/prd"
@@ -567,7 +568,7 @@ function UploadPanel({
     (nextFile?: File) => {
       if (!nextFile) return
       if (nextFile.size > MAX_UPLOAD_BYTES) {
-        toast.error("单文件最大 20MB")
+        toast.error(`单文件最大 ${MAX_UPLOAD_MB}MB`)
         return
       }
       const lower = nextFile.name.toLowerCase()
@@ -650,7 +651,7 @@ function UploadPanel({
           <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               ["4D", "Scoring"],
-              ["20MB", "Max file"],
+              [`${MAX_UPLOAD_MB}MB`, "Max file"],
               ["9", "Core sections"],
               ["0", "Storage"],
             ].map(([value, label]) => (
@@ -735,7 +736,7 @@ function UploadPanel({
                 : "点击或拖拽 PDF / Markdown / TXT 文件到此上传"}
             </p>
             <p className="helix-muted mt-3 text-base">
-              单文件最大 20MB · 扫描件 PDF 暂不支持
+              单文件最大 {MAX_UPLOAD_MB}MB · 扫描件 PDF 暂不支持
             </p>
           </div>
         </button>
