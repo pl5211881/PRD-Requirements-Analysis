@@ -281,6 +281,105 @@ function createHtmlReport(analysis: PrdAnalysis) {
 </html>`
 }
 
+function createClientFallbackAnalysis({
+  file,
+  sourceText,
+}: {
+  file: File
+  sourceText: string
+}): PrdAnalysis {
+  const generatedAt = new Date().toISOString()
+  const summary =
+    sourceText.trim().slice(0, 220) ||
+    "服务端分析暂不可用，已先生成本地规则草稿。建议转换为 Markdown/TXT 或稍后重试模型分析。"
+  const titles = [
+    "业务背景",
+    "战略目标",
+    "项目预期收益",
+    "产品定位",
+    "目标用户与使用场景",
+    "核心功能与流程",
+    "关键体验要求",
+    "技术实现说明",
+    "验收标准",
+  ]
+  const sections = titles.map((title) => ({
+    title,
+    summary,
+    bullets: ["服务端分析暂不可用，先保留本地可读草稿。"],
+    evidence: sourceText ? [sourceText.trim().slice(0, 120)] : [],
+    confidence: sourceText ? 0.35 : 0.1,
+    missing: ["需要重新运行服务端分析以获得完整结构化结果。"],
+  }))
+
+  const analysis = {
+    mode: "fallback" as const,
+    source: {
+      filename: file.name,
+      fileType: file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase() : "",
+      characterCount: sourceText.length,
+      generatedAt,
+    },
+    scores: [
+      { key: "viability" as const, label: "立得住", value: 5, summary: "本地规则草稿，暂未完成模型评审。" },
+      { key: "clarity" as const, label: "讲得清", value: 5, summary: "本地规则草稿，建议重试服务端分析。" },
+      { key: "resilience" as const, label: "扛得住", value: 5, summary: "服务端返回异常时的兜底结果。" },
+      { key: "operability" as const, label: "跑得通", value: 5, summary: "请压缩、拆分或转为 Markdown/TXT 后重试。" },
+    ],
+    findings: [
+      {
+        id: 1,
+        title: "服务端分析暂不可用",
+        category: "数据闭环与上线验证" as const,
+        severity: "严重" as const,
+        dimension: "跑得通",
+        evidenceCount: 0,
+        summary: "当前请求未能从服务端获得结构化 JSON，已生成本地规则草稿。",
+        evidence: [],
+        recommendation: "建议转为 Markdown/TXT 或刷新后重试；如持续失败，检查服务端日志。",
+        color: "#eca535",
+      },
+    ],
+    sections,
+    metrics: {
+      overallScore: 5,
+      fatalCount: 0,
+      severeCount: 1,
+      minorCount: 0,
+      highlightCount: 0,
+    },
+    gaps: ["服务端分析失败原因仍需排查。"],
+    warnings: ["服务端分析失败，已在浏览器端生成本地规则草稿。"],
+    designPriorities: [
+      {
+        id: 1,
+        priority: "P0" as const,
+        title: "核心流程与功能设计",
+        problem: summary,
+        impactedUser: "目标用户与核心业务场景",
+        reason: "先基于原文梳理核心任务链路、页面入口和关键状态。",
+        entryPoint: "从上传文档原文中提取可设计对象。",
+        artifact: "主流程图、页面清单、低保真原型",
+        evidence: sourceText ? [sourceText.trim().slice(0, 120)] : [],
+        severity: "严重" as const,
+      },
+    ],
+    designBrief: {
+      businessGoal: summary,
+      designGoal: "先完成核心流程、页面和状态梳理，再补齐完整 PRD 分析。",
+      usersAndScenarios: ["目标用户与使用场景需要在服务端分析恢复后补齐。"],
+      painPoints: [],
+      opportunities: ["将原始 PRD 转换为更稳定的 Markdown/TXT 输入。"],
+      constraints: [],
+      openQuestions: ["为什么服务端分析返回错误页面？"],
+    },
+    requirementStructure: sections,
+    markdown: `# ${file.name} PRD 本地规则草稿\n\n${summary}\n`,
+  }
+
+  return analysis
+}
+
 function readStoredModelConfig(): ModelConfig {
   if (typeof window === "undefined") return defaultModelConfig
 
@@ -1287,8 +1386,13 @@ export default function Home() {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "分析失败，请稍后重试。"
-      setError(message)
+      const fallback = createClientFallbackAnalysis({ file, sourceText })
+      setAnalysis(fallback)
+      setActiveAnalysisTab("priorities")
+      setActiveFinding(fallback.findings[0]?.id ?? null)
+      setError("")
       toast.error(message)
+      toast.info("已生成本地规则草稿")
     } finally {
       setAnalyzing(false)
     }
