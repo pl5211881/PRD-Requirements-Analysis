@@ -815,7 +815,7 @@ function UploadPanel({
         </div>
       </nav>
 
-      <section className="relative z-10 mx-auto grid w-[min(1180px,calc(100%-40px))] gap-10 py-14 lg:grid-cols-[0.95fr_1.05fr] lg:items-center lg:py-20">
+      <section className="relative z-10 mx-auto grid min-h-[calc(100vh-72px)] w-[min(1180px,calc(100%-40px))] items-center gap-10 py-10 lg:grid-cols-[0.95fr_1.05fr] lg:py-12">
         <div>
           <p className="helix-label">Institutional PRD Review</p>
           <h1 className="mt-5 max-w-[15ch] font-heading text-[clamp(2.5rem,5.4vw,4.8rem)] font-semibold leading-[1.12] tracking-normal text-[color:var(--helix-text)]">
