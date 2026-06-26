@@ -838,12 +838,11 @@ function UploadPanel({
           <p className="helix-muted mt-6 max-w-2xl text-base leading-[1.65]">
             上传 PDF / Markdown / TXT，快速生成面向设计决策的结构化评审报告。
           </p>
-          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
               ["4D", "Scoring"],
               [`${MAX_UPLOAD_MB}MB`, "Max file"],
               ["9", "Core sections"],
-              ["0", "Storage"],
             ].map(([value, label]) => (
               <div key={label} className="helix-panel-soft rounded-3xl p-4">
                 <p className="text-2xl font-semibold text-[color:var(--helix-text)]">
