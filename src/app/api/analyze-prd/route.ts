@@ -1,6 +1,5 @@
 import OpenAI from "openai"
 import { zodTextFormat } from "openai/helpers/zod"
-import { PDFParse } from "pdf-parse"
 
 import {
   createFallbackAnalysis,
@@ -17,6 +16,29 @@ export const runtime = "nodejs"
 export const maxDuration = 60
 
 const AI_TIMEOUT_MS = 25000
+
+type AnalysisStage =
+  | "received"
+  | "validation-error"
+  | "extracting"
+  | "pdf-error"
+  | "rules"
+  | "ai"
+  | "ai-fallback"
+  | "server-error"
+
+function jsonResponse(
+  body: unknown,
+  init?: ResponseInit & { stage?: AnalysisStage }
+) {
+  const { stage, headers, ...responseInit } = init || {}
+  const responseHeaders = new Headers(headers)
+  if (stage) responseHeaders.set("X-Analysis-Stage", stage)
+  return Response.json(body, {
+    ...responseInit,
+    headers: responseHeaders,
+  })
+}
 
 function isOfficialOpenAIBaseUrl(baseUrl: string) {
   if (!baseUrl) return true
@@ -134,6 +156,8 @@ function createSafeFallbackAnalysis({
 }
 
 async function extractPdfText(buffer: Buffer) {
+  await import("pdf-parse/worker")
+  const { PDFParse } = await import("pdf-parse")
   const parser = new PDFParse({ data: buffer })
   try {
     const result = await parser.getText()
@@ -505,58 +529,70 @@ async function analyzeWithOpenAIOrFallback({
   language: string
 }) {
   try {
-    return await analyzeWithOpenAI({
-      apiKey,
-      baseUrl,
-      model,
-      text,
-      filename,
-      fileType,
-      industry,
-      targetReader,
-      prdDepth,
-      language,
-    })
+    return {
+      analysis: await analyzeWithOpenAI({
+        apiKey,
+        baseUrl,
+        model,
+        text,
+        filename,
+        fileType,
+        industry,
+        targetReader,
+        prdDepth,
+        language,
+      }),
+      stage: "ai" as const,
+    }
   } catch {
-    return createSafeFallbackAnalysis({
-      text,
-      filename,
-      fileType,
-      warning: "API Key 无效、模型请求失败或模型输出无法解析，已自动生成规则草稿。",
-    })
+    return {
+      analysis: createSafeFallbackAnalysis({
+        text,
+        filename,
+        fileType,
+        warning: "API Key 无效、模型请求失败或模型输出无法解析，已自动生成规则草稿。",
+      }),
+      stage: "ai-fallback" as const,
+    }
   }
 }
 
 export async function POST(request: Request) {
+  let stage: AnalysisStage = "received"
+
   try {
     const formData = await request.formData()
     const file = formData.get("file")
 
     if (!(file instanceof File)) {
-      return Response.json({ error: "请先上传需求文档。" }, { status: 400 })
+      return jsonResponse(
+        { error: "请先上传需求文档。" },
+        { status: 400, stage: "validation-error" }
+      )
     }
 
     if (!isAcceptedFile(file.name)) {
-      return Response.json(
+      return jsonResponse(
         { error: "仅支持 PDF、Markdown、TXT 格式文件。" },
-        { status: 400 }
+        { status: 400, stage: "validation-error" }
       )
     }
 
     if (file.size > MAX_UPLOAD_BYTES) {
-      return Response.json(
+      return jsonResponse(
         {
           error: `单文件最大 ${MAX_UPLOAD_MB}MB，请压缩、拆分或转为 Markdown/TXT 后再上传。`,
         },
-        { status: 400 }
+        { status: 400, stage: "validation-error" }
       )
     }
 
+    stage = "extracting"
     const text = await extractText(file)
     if (text.length < 30) {
-      return Response.json(
+      return jsonResponse(
         { error: "未提取到足够文本内容，请检查文件是否为空或为扫描件。" },
-        { status: 400 }
+        { status: 400, stage: "pdf-error" }
       )
     }
 
@@ -574,7 +610,7 @@ export async function POST(request: Request) {
     const language = String(formData.get("language") || "中文")
 
     if (analysisMode !== "rules" && apiKey) {
-      const analysis = await analyzeWithOpenAIOrFallback({
+      const { analysis, stage: analysisStage } = await analyzeWithOpenAIOrFallback({
         apiKey,
         baseUrl,
         model,
@@ -587,22 +623,34 @@ export async function POST(request: Request) {
         language,
       })
 
-      return Response.json(analysis)
+      return jsonResponse(analysis, { stage: analysisStage })
     }
 
     const fallback = createSafeFallbackAnalysis({
       text,
       filename: file.name,
       fileType: extension,
-      warning: "未配置 API Key，已生成规则草稿。",
+      warning:
+        analysisMode === "rules"
+          ? "已按规则模式生成草稿。"
+          : "未配置 API Key，已生成规则草稿。",
     })
-    return Response.json(fallback)
+    return jsonResponse(fallback, { stage: "rules" })
   } catch (error) {
     const message =
       error instanceof Error
         ? error.message
         : "分析失败，请检查文件后重试。"
+    const safeStage: AnalysisStage =
+      stage === "extracting" && /扫描件 PDF|PDF|pdf/i.test(message)
+        ? "pdf-error"
+        : "server-error"
 
-    return Response.json({ error: message }, { status: 400 })
+    console.error("[analyze-prd] request failed", {
+      stage: safeStage,
+      message,
+    })
+
+    return jsonResponse({ error: message }, { status: 400, stage: safeStage })
   }
 }

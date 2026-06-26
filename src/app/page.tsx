@@ -494,6 +494,20 @@ async function readJsonResponse<T>(response: Response, fallbackMessage: string) 
   }
 }
 
+function getAnalysisRequestLabel(stage: string, fallback: "model" | "rules") {
+  const labels: Record<string, string> = {
+    model: "模型分析",
+    rules: "规则分析",
+    "validation-error": "上传校验",
+    extracting: "文档解析",
+    "pdf-error": "PDF 解析",
+    ai: "模型分析",
+    "ai-fallback": "模型兜底",
+    "server-error": "服务端处理",
+  }
+  return labels[stage] || labels[fallback]
+}
+
 function ModelConfigDialog({
   config,
   setConfig,
@@ -1412,17 +1426,25 @@ export default function Home() {
       return formData
     }
 
-    const requestAnalysis = async (includeModelConfig: boolean) => {
+    const requestAnalysis = async (
+      includeModelConfig: boolean,
+      fallbackStage: "model" | "rules"
+    ) => {
       const response = await fetch("/api/analyze-prd", {
         method: "POST",
         body: createAnalyzeFormData(includeModelConfig),
       })
-      const payload = await readJsonResponse<PrdAnalysis>(response, "分析失败")
+      const stage = response.headers.get("x-analysis-stage") || fallbackStage
+      const label = getAnalysisRequestLabel(stage, fallbackStage)
+      const payload = await readJsonResponse<PrdAnalysis>(
+        response,
+        `${label}失败`
+      )
       if (!response.ok) {
         throw new Error(
           "error" in payload && typeof payload.error === "string"
-            ? payload.error
-            : "分析失败"
+            ? `${label}失败：${payload.error}`
+            : `${label}失败`
         )
       }
       return payload
@@ -1431,10 +1453,10 @@ export default function Home() {
     try {
       let payload: PrdAnalysis
       try {
-        payload = await requestAnalysis(Boolean(modelConfig.apiKey))
+        payload = await requestAnalysis(Boolean(modelConfig.apiKey), "model")
       } catch (error) {
         if (!modelConfig.apiKey) throw error
-        payload = await requestAnalysis(false)
+        payload = await requestAnalysis(false, "rules")
         toast.info("模型分析失败，已自动切换为规则草稿")
       }
       payload = normalizeAnalysisForView(payload)
