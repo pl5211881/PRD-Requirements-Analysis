@@ -42,6 +42,7 @@ const severityClass = {
 
 const depthOptions = ["快速", "标准", "深入"]
 const analysisTabs = ["priorities", "brief", "problems"] as const
+const BUILD_ID = "e80a447"
 
 type AnalysisTab = (typeof analysisTabs)[number]
 type ProblemSeverity = "致命" | "严重" | "轻微"
@@ -378,6 +379,61 @@ function createClientFallbackAnalysis({
   }
 
   return analysis
+}
+
+function normalizeAnalysisForView(analysis: PrdAnalysis): PrdAnalysis {
+  return {
+    ...analysis,
+    source: {
+      filename: analysis.source?.filename || "需求文档",
+      fileType: analysis.source?.fileType || "",
+      characterCount: analysis.source?.characterCount || 0,
+      generatedAt: analysis.source?.generatedAt || new Date().toISOString(),
+    },
+    scores: Array.isArray(analysis.scores) ? analysis.scores : [],
+    findings: Array.isArray(analysis.findings) ? analysis.findings : [],
+    sections: Array.isArray(analysis.sections) ? analysis.sections : [],
+    metrics: {
+      overallScore: analysis.metrics?.overallScore ?? 5,
+      fatalCount: analysis.metrics?.fatalCount ?? 0,
+      severeCount: analysis.metrics?.severeCount ?? 0,
+      minorCount: analysis.metrics?.minorCount ?? 0,
+      highlightCount: analysis.metrics?.highlightCount ?? 0,
+    },
+    gaps: Array.isArray(analysis.gaps) ? analysis.gaps : [],
+    warnings: Array.isArray(analysis.warnings) ? analysis.warnings : [],
+    designPriorities: Array.isArray(analysis.designPriorities)
+      ? analysis.designPriorities
+      : [],
+    designBrief: {
+      businessGoal: analysis.designBrief?.businessGoal || "暂未识别业务目标。",
+      designGoal: analysis.designBrief?.designGoal || "暂未识别设计目标。",
+      usersAndScenarios: Array.isArray(analysis.designBrief?.usersAndScenarios)
+        ? analysis.designBrief.usersAndScenarios
+        : [],
+      painPoints: Array.isArray(analysis.designBrief?.painPoints)
+        ? analysis.designBrief.painPoints
+        : [],
+      opportunities: Array.isArray(analysis.designBrief?.opportunities)
+        ? analysis.designBrief.opportunities
+        : [],
+      constraints: Array.isArray(analysis.designBrief?.constraints)
+        ? analysis.designBrief.constraints
+        : [],
+      openQuestions: Array.isArray(analysis.designBrief?.openQuestions)
+        ? analysis.designBrief.openQuestions
+        : [],
+    },
+    requirementStructure: Array.isArray(analysis.requirementStructure)
+      ? analysis.requirementStructure.map((section) => ({
+          ...section,
+          bullets: Array.isArray(section.bullets) ? section.bullets : [],
+          evidence: Array.isArray(section.evidence) ? section.evidence : [],
+          missing: Array.isArray(section.missing) ? section.missing : [],
+        }))
+      : [],
+    markdown: analysis.markdown || `# ${analysis.source?.filename || "需求文档"} 分析报告`,
+  }
 }
 
 function readStoredModelConfig(): ModelConfig {
@@ -724,7 +780,9 @@ function UploadPanel({
               <p className="text-sm font-semibold text-[color:var(--helix-text)]">
                 PRD Sentinel
               </p>
-              <p className="helix-muted text-xs">Requirement intelligence</p>
+              <p className="helix-muted text-xs">
+                Requirement intelligence · build:{BUILD_ID}
+              </p>
             </div>
           </div>
           <div className="hidden items-center gap-2 md:flex">
@@ -1379,6 +1437,7 @@ export default function Home() {
         payload = await requestAnalysis(false)
         toast.info("模型分析失败，已自动切换为规则草稿")
       }
+      payload = normalizeAnalysisForView(payload)
       setAnalysis(payload)
       setActiveAnalysisTab("priorities")
       setActiveFinding(payload.findings?.[0]?.id ?? null)
@@ -1386,7 +1445,9 @@ export default function Home() {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "分析失败，请稍后重试。"
-      const fallback = createClientFallbackAnalysis({ file, sourceText })
+      const fallback = normalizeAnalysisForView(
+        createClientFallbackAnalysis({ file, sourceText })
+      )
       setAnalysis(fallback)
       setActiveAnalysisTab("priorities")
       setActiveFinding(fallback.findings[0]?.id ?? null)
@@ -1600,6 +1661,7 @@ export default function Home() {
           <div>
             <div className="flex items-center gap-2 text-sm text-white/44">
               <span className="helix-accent">PRD Sentinel</span>
+              <span>build:{BUILD_ID}</span>
               <span>/</span>
               <span className="truncate">{analysis.source.filename}</span>
             </div>
