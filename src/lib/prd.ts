@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const MAX_UPLOAD_MB = 4
+export const MAX_UPLOAD_MB = 20
 export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 export const acceptedFileExtensions = [".pdf", ".md", ".markdown", ".txt"]
